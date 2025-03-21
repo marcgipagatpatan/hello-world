@@ -1,0 +1,123 @@
+function sendStatusReport() {
+  const CONFIG = getConfig();  
+  if (!CONFIG) return;
+  
+  try {
+    const pdfData = convertSheetToPDF(CONFIG);
+    if (!pdfData) {
+      Logger.log("PDF conversion failed");
+      return;
+    }
+
+    sendEmailWithAttachment(CONFIG.emailRecipients, pdfData.blob);
+    sendSlackMessageWithLink(CONFIG.slackToken, CONFIG.slackChannel, pdfData.url);
+  } catch (error) {
+    Logger.log("Error in sendStatusReport: " + error.message);
+  }
+}
+
+function getConfig() {
+  try {
+    const scriptProperties = PropertiesService.getScriptProperties(); // Correct way to access properties
+    return {
+      sheetId: '1D8u-Y0GY-m95AXtGLHRZhZI8xBIZCfMOEI-Ig3lBM00',
+      sheetName: 'Fraxional Labs',
+      emailRecipients: 'patricia@fraxional.io, tech@fraxional.io, pmo@fraxional.io, project-reports@fraxional.io',
+      slackToken: scriptProperties.getProperty('SLACK_BOT_TOKEN'), // Fetch token securely
+      slackChannel: 'C08E9MPCRHD',
+      driveFolderId: '1ypxYBz5BcMWLoMkTZ6Pm0U7d2d4YXppz'
+    };
+  } catch (error) {
+    Logger.log("Error loading config: " + error.message);
+    return null;
+  }
+}
+
+function convertSheetToPDF(config) {
+  try {
+    const sheet = SpreadsheetApp.openById(config.sheetId).getSheetByName(config.sheetName);
+    if (!sheet) {
+      Logger.log("Error: Sheet not found");
+      return null;
+    }
+
+    const exportUrl = `https://docs.google.com/spreadsheets/d/${config.sheetId}/export?format=pdf&gid=${sheet.getSheetId()}&portrait=true&size=A4&fitw=true&gridlines=false`;
+
+    const options = {
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(exportUrl, options);
+    if (response.getResponseCode() !== 200) {
+      Logger.log("Failed to fetch PDF: " + response.getContentText());
+      return null;
+    }
+
+    // Format date as YYYYMMDD
+    const date = new Date();
+    const formattedDate = date.getFullYear().toString() +
+                          ('0' + (date.getMonth() + 1)).slice(-2) +
+                          ('0' + date.getDate()).slice(-2);
+    const fileName = `${formattedDate} - Fraxional Labs - Focus Build - Status Report.pdf`;
+
+    const pdfBlob = response.getBlob().setName(fileName);
+    
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(config.driveFolderId);
+    } catch (err) {
+      Logger.log("Error: Invalid folder ID.");
+      return null;
+    }
+
+    const file = folder.createFile(pdfBlob);
+
+    // Set file permission to "can comment" for anyone in the organization
+    file.setSharing(DriveApp.Access.DOMAIN, DriveApp.Permission.COMMENT);
+
+    return { blob: pdfBlob, url: file.getUrl() };
+  } catch (error) {
+    Logger.log("Error in convertSheetToPDF: " + error.message);
+    return null;
+  }
+}
+
+function sendEmailWithAttachment(recipients, pdfBlob) {
+  try {
+    MailApp.sendEmail({
+      to: recipients,
+      subject: 'Fraxional Labs - Focus Build - Status Report',
+      body: 'Please find the attached status report for the current build cycle.This email has been sent automatically via Google App Script.',
+      attachments: [pdfBlob]
+    });
+  } catch (error) {
+    Logger.log("Error sending email: " + error.message);
+  }
+}
+
+function sendSlackMessageWithLink(slackToken, slackChannel, fileUrl) {
+  try {
+    const message = {
+      channel: slackChannel,
+      text: `📢 *Fraxional Labs - Focus Build - Status Report*\nHere is the latest report for the current build cycle: ${fileUrl}`
+    };
+
+    const options = {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: "Bearer " + slackToken },
+      payload: JSON.stringify(message),
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", options);
+    const result = JSON.parse(response.getContentText());
+
+    if (!result.ok) {
+      Logger.log("Slack API Error: " + result.error);
+    }
+  } catch (error) {
+    Logger.log("Error sending Slack message: " + error.message);
+  }
+}
