@@ -1,7 +1,7 @@
 function sendStatusReport() {
-  const CONFIG = getConfig();  
+  const CONFIG = getConfig();
   if (!CONFIG) return;
-  
+
   try {
     const pdfData = convertSheetToPDF(CONFIG);
     if (!pdfData) {
@@ -10,7 +10,15 @@ function sendStatusReport() {
     }
 
     sendEmailWithAttachment(CONFIG.emailRecipients, pdfData.blob);
-    sendSlackMessageWithLink(CONFIG.slackToken, CONFIG.slackChannel, pdfData.url);
+
+    // Iterate through multiple slack channels
+    if (CONFIG.slackChannels && Array.isArray(CONFIG.slackChannels)) {
+      CONFIG.slackChannels.forEach(channel => {
+        sendSlackMessageWithLink(CONFIG.slackToken, channel, pdfData.url);
+      });
+    } else {
+      Logger.log("No valid Slack channels configured.");
+    }
   } catch (error) {
     Logger.log("Error in sendStatusReport: " + error.message);
   }
@@ -18,14 +26,14 @@ function sendStatusReport() {
 
 function getConfig() {
   try {
-    const scriptProperties = PropertiesService.getScriptProperties(); // Correct way to access properties
+    const scriptProperties = PropertiesService.getScriptProperties();
     return {
-      sheetId: '1D8u-Y0GY-m95AXtGLHRZhZI8xBIZCfMOEI-Ig3lBM00',
-      sheetName: 'Fraxional Labs',
-      emailRecipients: 'patricia@fraxional.io, tech@fraxional.io, pmo@fraxional.io, project-reports@fraxional.io',
-      slackToken: scriptProperties.getProperty('SLACK_BOT_TOKEN'), // Fetch token securely
-      slackChannel: 'C08E9MPCRHD',
-      driveFolderId: '1ypxYBz5BcMWLoMkTZ6Pm0U7d2d4YXppz'
+      sheetId: scriptProperties.getProperty('SHEET_ID') || '1D8u-Y0GY-m95AXtGLHRZhZI8xBIZCfMOEI-Ig3lBM00',
+      sheetName: scriptProperties.getProperty('SHEET_NAME') || 'Fraxional Labs',
+      emailRecipients: scriptProperties.getProperty('EMAIL_RECIPIENTS') || 'patricia@fraxional.io, tech@fraxional.io, pmo@fraxional.io, project-reports@fraxional.io',
+      slackToken: scriptProperties.getProperty('SLACK_BOT_TOKEN'),
+      slackChannels: JSON.parse(scriptProperties.getProperty('SLACK_CHANNELS') || '["C08E9MPCRHD"]'), // Default to original channel if none provided.
+      driveFolderId: scriptProperties.getProperty('DRIVE_FOLDER_ID') || '1ypxYBz5BcMWLoMkTZ6Pm0U7d2d4YXppz'
     };
   } catch (error) {
     Logger.log("Error loading config: " + error.message);
@@ -54,15 +62,14 @@ function convertSheetToPDF(config) {
       return null;
     }
 
-    // Format date as YYYYMMDD
     const date = new Date();
     const formattedDate = date.getFullYear().toString() +
-                          ('0' + (date.getMonth() + 1)).slice(-2) +
-                          ('0' + date.getDate()).slice(-2);
+      ('0' + (date.getMonth() + 1)).slice(-2) +
+      ('0' + date.getDate()).slice(-2);
     const fileName = `${formattedDate} - Fraxional Labs - Focus Build - Status Report.pdf`;
 
     const pdfBlob = response.getBlob().setName(fileName);
-    
+
     let folder;
     try {
       folder = DriveApp.getFolderById(config.driveFolderId);
@@ -72,8 +79,6 @@ function convertSheetToPDF(config) {
     }
 
     const file = folder.createFile(pdfBlob);
-
-    // Set file permission to "can comment" for anyone in the organization
     file.setSharing(DriveApp.Access.DOMAIN, DriveApp.Permission.COMMENT);
 
     return { blob: pdfBlob, url: file.getUrl() };
